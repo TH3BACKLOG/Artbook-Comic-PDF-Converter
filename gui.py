@@ -33,8 +33,16 @@ class PDFConverterApp:
         # Discovered books list
         self.discovered_folders = []
 
-        # Current workspace
-        self.current_dir = Path.cwd()
+        # Current workspace (smart detect: if current folder has no books but parent does, use parent)
+        cwd = Path.cwd()
+        parent = cwd.parent
+        if cwd != parent and not folder_to_pdf.find_image_folders(cwd, recursive=False):
+            if folder_to_pdf.find_image_folders(parent, recursive=False):
+                self.current_dir = parent
+            else:
+                self.current_dir = cwd
+        else:
+            self.current_dir = cwd
 
         self._setup_styles()
         self._build_ui()
