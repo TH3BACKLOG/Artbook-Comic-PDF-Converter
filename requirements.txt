@@ -1,0 +1,12 @@
+# Core Dependencies (High-Quality Image Processing & PDF Generation)
+pillow>=10.0.0
+
+# Optional Lossless Performance Optimization (Fast direct stream copy without re-compression)
+img2pdf>=0.5.0
+
+# Optional Scanlation & Japanese Translation Engines
+# Run 'pip install easyocr' to enable automatic speech bubble text detection
+easyocr>=1.7.0
+
+# Optional local OCR engine via Tesseract
+pytesseract>=0.3.10

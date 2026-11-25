@@ -1,0 +1,39 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
+# Environment
+.env
+venv/
+env/
+.venv/
+
+# Ignore all artbook/book folders and archives
+*Artbooks/
+*Books/
+0. output/
+temp/
+tmp/
+
+# Formats
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.bmp
+*.tif
+*.tiff
+*.jp2
+*.gif
+*.pdf
+*.zip
+*.rar
+*.7z
+*.cbz
+*.cbr
+
+# Translation guide outputs
+*(English Translation Guide).*
+test_write.txt
