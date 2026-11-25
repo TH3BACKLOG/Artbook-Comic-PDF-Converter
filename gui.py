@@ -10,9 +10,54 @@ import sys
 import time
 import queue
 import threading
+import traceback
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+
+# Ensure script directory is prioritized in sys.path
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+# Logging configuration
+LOGS_DIR = SCRIPT_DIR / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+ERROR_LOG_PATH = LOGS_DIR / "error.log"
+ACTIVITY_LOG_PATH = LOGS_DIR / "activity.log"
+
+
+def log_exception(exc_type, exc_value, exc_traceback):
+    """Logs unhandled exceptions to logs/error.log with full traceback and shows alert."""
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+
+    timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
+    tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    err_msg = f"{timestamp} UNHANDLED EXCEPTION:\n{tb_text}\n" + ("=" * 70) + "\n"
+
+    try:
+        with open(ERROR_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(err_msg)
+    except Exception:
+        pass
+
+    sys.stderr.write(err_msg)
+
+    try:
+        messagebox.showerror(
+            "Application Error",
+            f"An unexpected error occurred:\n\n{exc_value}\n\nFull details have been saved to:\n{ERROR_LOG_PATH}"
+        )
+    except Exception:
+        pass
+
+
+# Register global exception hooks
+sys.excepthook = log_exception
+if hasattr(threading, "excepthook"):
+    threading.excepthook = lambda args: log_exception(args.exc_type, args.exc_value, args.exc_traceback)
 
 # Import core modules
 import folder_to_pdf
@@ -379,9 +424,15 @@ class PDFConverterApp:
         self.r_eng_ollama.configure(state=state)
 
     def log(self, message: str):
-        """Append message to log queue for thread-safe UI update."""
+        """Append message to log queue and activity log file."""
         timestamp = time.strftime("[%H:%M:%S] ")
-        self.log_queue.put(timestamp + message)
+        formatted = timestamp + message
+        self.log_queue.put(formatted)
+        try:
+            with open(ACTIVITY_LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(formatted + "\n")
+        except Exception:
+            pass
 
     def _start_log_consumer(self):
         """Periodically pulls logs from the queue and inserts into log_text."""
