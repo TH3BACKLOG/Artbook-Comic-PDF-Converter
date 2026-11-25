@@ -73,7 +73,7 @@
 ---
 
 ## 4. Key Conventions & Rules for Future Work
-1. **Preserve Originals**: Never overwrite or delete original scans, raw PDFs, or un-translated archives. Translations must always be output as companion files (e.g. `<Title> [English Translated].pdf`).
+1. **Preserve Originals**: Never overwrite or delete original scans, raw PDFs, or un-translated archives by default. Translations must always be output as companion files (e.g. `<Title> [English Translated].pdf`).
 2. **Memory Safety**: Do NOT load entire high-resolution artbook PDFs into RAM simultaneously. Always stream rendered pages using `tempfile.TemporaryDirectory` or process page-by-page.
 3. **Windows Batch Scripts**:
    - Never use unquoted `&` in titles or echo statements in batch files (`&` acts as CMD command chaining).
@@ -81,3 +81,18 @@
 4. **Git Operations**:
    - Project repository branch: `main`.
    - Never commit binaries, `.pdf`, image folders, or `logs/*.log` files (ensured via `.gitignore`).
+
+---
+
+## 5. Upcoming Feature Roadmap & Backlog (User Requested)
+1. **Process Cancellation (`threading.Event` / Cancel Button)**:
+   - Provide a responsive `⏹ Cancel / Stop Process` button in the GUI and graceful CLI termination.
+   - Allows the user to safely interrupt conversion or translation mid-batch or mid-book.
+   - Clean up partial temporary files cleanly without leaving incomplete or corrupt outputs.
+2. **Optional Post-Conversion Source Folder Deletion**:
+   - Add a user-selectable opt-in option (e.g., checkbox in GUI and `--delete-source` flag in CLI) to delete raw scan folders once PDF generation has successfully completed and verified.
+   - Require explicit confirmation dialog before deletion to prevent accidental loss of raw scans.
+3. **Already Converted Detection & User Notifications**:
+   - Check if an output PDF already exists for a target book folder or translation item before processing.
+   - Notify the user with a clear prompt/badge/message (e.g. `"Notice: '<Title>.pdf' already exists in destination. Skip or Overwrite?"`).
+   - Prevent redundant work and protect existing converted files.
