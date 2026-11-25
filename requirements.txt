@@ -1,6 +1,9 @@
 # Core Dependencies (High-Quality Image Processing & PDF Generation)
 pillow>=10.0.0
 
+# PDF Page Rendering & Translation Engine (Fast, high-fidelity PDF page rendering without external tools)
+pypdfium2>=4.0.0
+
 # Optional Lossless Performance Optimization (Fast direct stream copy without re-compression)
 img2pdf>=0.5.0
 

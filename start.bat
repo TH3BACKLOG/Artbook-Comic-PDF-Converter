@@ -15,5 +15,14 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: Check if core packages are installed
+python -c "import PIL, pypdfium2" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo [*] Checking dependencies... Installing missing packages (Pillow, pypdfium2)...
+    pip install pillow pypdfium2
+    echo.
+)
+
 :: Launch the Desktop GUI
 start "" python "%~dp0gui.py"

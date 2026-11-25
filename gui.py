@@ -2,7 +2,7 @@
 """
 Artbook & Comic PDF Converter & Translator - Desktop GUI
 A modern interface to scan folders, convert to high-quality PDFs, and translate Japanese books
-with real-time dual progress bars (Current Book & Overall Batch).
+and existing PDF files with real-time dual progress bars (Current Book & Overall Batch).
 """
 
 import os
@@ -23,21 +23,22 @@ class PDFConverterApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Artbook & Comic PDF Converter & Translator")
-        self.root.geometry("1000x750")
-        self.root.minsize(880, 650)
+        self.root.geometry("1040x770")
+        self.root.minsize(900, 680)
 
         # Message queue for background worker updates
         self.log_queue = queue.Queue()
         self.is_processing = False
 
-        # Discovered books list
+        # Discovered items
         self.discovered_folders = []
+        self.discovered_pdfs = []
 
         # Current workspace (smart detect: if current folder has no books but parent does, use parent)
         cwd = Path.cwd()
         parent = cwd.parent
-        if cwd != parent and not folder_to_pdf.find_image_folders(cwd, recursive=False):
-            if folder_to_pdf.find_image_folders(parent, recursive=False):
+        if cwd != parent and not folder_to_pdf.find_image_folders(cwd, recursive=False) and not folder_to_pdf.find_pdf_files(cwd, recursive=False):
+            if folder_to_pdf.find_image_folders(parent, recursive=False) or folder_to_pdf.find_pdf_files(parent, recursive=False):
                 self.current_dir = parent
             else:
                 self.current_dir = cwd
@@ -87,47 +88,81 @@ class PDFConverterApp:
         browse_btn = ttk.Button(top_frame, text="Browse...", command=self.browse_directory)
         browse_btn.pack(side=tk.LEFT, padx=3)
 
-        scan_btn = ttk.Button(top_frame, text="🔍 Scan for Books", style="Action.TButton", command=self.scan_books)
+        scan_btn = ttk.Button(top_frame, text="🔍 Scan for Books & PDFs", style="Action.TButton", command=self.scan_books)
         scan_btn.pack(side=tk.LEFT, padx=(5, 0))
 
         # ==========================================
-        # 2. MIDDLE SPLIT: Books List & Settings
+        # 2. MIDDLE SPLIT: Dual-Tab Items List & Settings
         # ==========================================
         middle_paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
         middle_paned.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
 
-        # --- Left Pane: Book List ---
-        list_frame = ttk.LabelFrame(middle_paned, text=" Discovered Book Folders ", padding="8")
-        middle_paned.add(list_frame, weight=3)
+        # --- Left Pane: Dual-Tab Notebook for Folders & Existing PDFs ---
+        self.left_notebook = ttk.Notebook(middle_paned)
+        middle_paned.add(self.left_notebook, weight=3)
 
-        # Treeview for folders
-        columns = ("name", "images", "status")
-        self.tree = ttk.Treeview(list_frame, columns=columns, show="headings", selectmode="extended")
-        self.tree.heading("name", text="Folder / Book Title")
-        self.tree.heading("images", text="Images")
-        self.tree.heading("status", text="Status")
-        self.tree.column("name", width=340)
-        self.tree.column("images", width=70, anchor=tk.CENTER)
-        self.tree.column("status", width=120, anchor=tk.CENTER)
+        # ----------------------------------------------------
+        # Tab A: Image Book Folders
+        # ----------------------------------------------------
+        folder_tab = ttk.Frame(self.left_notebook, padding="6")
+        self.left_notebook.add(folder_tab, text="  📁 Image Book Folders  ")
 
-        tree_scroll_y = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=tree_scroll_y.set)
+        columns_f = ("name", "images", "status")
+        self.folder_tree = ttk.Treeview(folder_tab, columns=columns_f, show="headings", selectmode="extended")
+        self.folder_tree.heading("name", text="Folder / Book Title")
+        self.folder_tree.heading("images", text="Images")
+        self.folder_tree.heading("status", text="Status")
+        self.folder_tree.column("name", width=330)
+        self.folder_tree.column("images", width=70, anchor=tk.CENTER)
+        self.folder_tree.column("status", width=120, anchor=tk.CENTER)
 
-        self.tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        tree_scroll_y.pack(side=tk.RIGHT, fill=tk.Y, before=self.tree)
+        tree_scroll_f = ttk.Scrollbar(folder_tab, orient=tk.VERTICAL, command=self.folder_tree.yview)
+        self.folder_tree.configure(yscrollcommand=tree_scroll_f.set)
 
-        # List Action Toolbar
-        list_btn_bar = ttk.Frame(list_frame)
-        list_btn_bar.pack(fill=tk.X, pady=(6, 0))
+        self.folder_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        tree_scroll_f.pack(side=tk.RIGHT, fill=tk.Y, before=self.folder_tree)
 
-        select_all_btn = ttk.Button(list_btn_bar, text="Select All", command=self.select_all)
-        select_all_btn.pack(side=tk.LEFT, padx=2)
+        folder_btn_bar = ttk.Frame(folder_tab)
+        folder_btn_bar.pack(fill=tk.X, pady=(6, 0))
 
-        deselect_all_btn = ttk.Button(list_btn_bar, text="Deselect All", command=self.deselect_all)
-        deselect_all_btn.pack(side=tk.LEFT, padx=2)
+        ttk.Button(folder_btn_bar, text="Select All", command=lambda: self.folder_tree.selection_set(self.folder_tree.get_children())).pack(side=tk.LEFT, padx=2)
+        ttk.Button(folder_btn_bar, text="Deselect All", command=lambda: self.folder_tree.selection_remove(self.folder_tree.get_children())).pack(side=tk.LEFT, padx=2)
 
-        self.count_label = ttk.Label(list_btn_bar, text="0 books found", font=("Segoe UI", 9, "italic"))
-        self.count_label.pack(side=tk.RIGHT, padx=5)
+        self.folder_count_lbl = ttk.Label(folder_btn_bar, text="0 folders found", font=("Segoe UI", 9, "italic"))
+        self.folder_count_lbl.pack(side=tk.RIGHT, padx=5)
+
+        # ----------------------------------------------------
+        # Tab B: Existing PDF Files (Direct PDF Translation)
+        # ----------------------------------------------------
+        pdf_tab_view = ttk.Frame(self.left_notebook, padding="6")
+        self.left_notebook.add(pdf_tab_view, text="  📄 Existing PDF Files  ")
+
+        columns_p = ("name", "pages", "status")
+        self.pdf_tree = ttk.Treeview(pdf_tab_view, columns=columns_p, show="headings", selectmode="extended")
+        self.pdf_tree.heading("name", text="PDF Document Title")
+        self.pdf_tree.heading("pages", text="Pages")
+        self.pdf_tree.heading("status", text="Status")
+        self.pdf_tree.column("name", width=330)
+        self.pdf_tree.column("pages", width=70, anchor=tk.CENTER)
+        self.pdf_tree.column("status", width=120, anchor=tk.CENTER)
+
+        tree_scroll_p = ttk.Scrollbar(pdf_tab_view, orient=tk.VERTICAL, command=self.pdf_tree.yview)
+        self.pdf_tree.configure(yscrollcommand=tree_scroll_p.set)
+
+        self.pdf_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        tree_scroll_p.pack(side=tk.RIGHT, fill=tk.Y, before=self.pdf_tree)
+
+        pdf_btn_bar = ttk.Frame(pdf_tab_view)
+        pdf_btn_bar.pack(fill=tk.X, pady=(6, 0))
+
+        ttk.Button(pdf_btn_bar, text="Select All", command=lambda: self.pdf_tree.selection_set(self.pdf_tree.get_children())).pack(side=tk.LEFT, padx=2)
+        ttk.Button(pdf_btn_bar, text="Deselect All", command=lambda: self.pdf_tree.selection_remove(self.pdf_tree.get_children())).pack(side=tk.LEFT, padx=2)
+        ttk.Button(pdf_btn_bar, text="➕ Add PDF File(s)...", style="Action.TButton", command=self.add_custom_pdfs).pack(side=tk.LEFT, padx=6)
+
+        self.pdf_count_lbl = ttk.Label(pdf_btn_bar, text="0 PDFs found", font=("Segoe UI", 9, "italic"))
+        self.pdf_count_lbl.pack(side=tk.RIGHT, padx=5)
+
+        self.left_notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed)
 
         # --- Right Pane: Settings Notebook ---
         settings_notebook = ttk.Notebook(middle_paned)
@@ -135,22 +170,30 @@ class PDFConverterApp:
 
         # Tab 1: PDF Options
         pdf_tab = ttk.Frame(settings_notebook, padding="10")
-        settings_notebook.add(pdf_tab, text="  PDF Output Settings  ")
+        settings_notebook.add(pdf_tab, text="  PDF & Output Settings  ")
 
         ttk.Label(pdf_tab, text="Quality Preset:", style="SubHeader.TLabel").pack(anchor=tk.W, pady=(0, 4))
         self.quality_var = tk.IntVar(value=100)
         q_frame = ttk.Frame(pdf_tab)
-        q_frame.pack(fill=tk.X, pady=(0, 8))
+        q_frame.pack(fill=tk.X, pady=(0, 6))
         ttk.Radiobutton(q_frame, text="100% Maximum Clarity (Lossless)", variable=self.quality_var, value=100).pack(anchor=tk.W)
         ttk.Radiobutton(q_frame, text="95% High Quality (Compressed)", variable=self.quality_var, value=95).pack(anchor=tk.W)
         ttk.Radiobutton(q_frame, text="85% Standard", variable=self.quality_var, value=85).pack(anchor=tk.W)
 
-        self.overwrite_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(pdf_tab, text="Overwrite existing PDF files", variable=self.overwrite_var).pack(anchor=tk.W, pady=(0, 8))
+        ttk.Label(pdf_tab, text="PDF Translation Resolution (DPI):", style="SubHeader.TLabel").pack(anchor=tk.W, pady=(4, 2))
+        self.dpi_var = tk.IntVar(value=200)
+        dpi_frame = ttk.Frame(pdf_tab)
+        dpi_frame.pack(fill=tk.X, pady=(0, 6))
+        ttk.Radiobutton(dpi_frame, text="200 DPI (Recommended - Crisp & Fast)", variable=self.dpi_var, value=200).pack(anchor=tk.W)
+        ttk.Radiobutton(dpi_frame, text="300 DPI (Ultra Sharp - High Detail Scans)", variable=self.dpi_var, value=300).pack(anchor=tk.W)
+        ttk.Radiobutton(dpi_frame, text="150 DPI (Fast / Compact File Size)", variable=self.dpi_var, value=150).pack(anchor=tk.W)
 
-        ttk.Label(pdf_tab, text="Output Directory:", style="SubHeader.TLabel").pack(anchor=tk.W, pady=(0, 4))
+        self.overwrite_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(pdf_tab, text="Overwrite existing output files", variable=self.overwrite_var).pack(anchor=tk.W, pady=(0, 6))
+
+        ttk.Label(pdf_tab, text="Output Directory:", style="SubHeader.TLabel").pack(anchor=tk.W, pady=(4, 4))
         self.output_same_var = tk.BooleanVar(value=True)
-        ttk.Radiobutton(pdf_tab, text="Save alongside folder (Default)", variable=self.output_same_var, value=True, command=self._toggle_output_entry).pack(anchor=tk.W)
+        ttk.Radiobutton(pdf_tab, text="Save alongside source book (Default)", variable=self.output_same_var, value=True, command=self._toggle_output_entry).pack(anchor=tk.W)
         ttk.Radiobutton(pdf_tab, text="Custom output directory:", variable=self.output_same_var, value=False, command=self._toggle_output_entry).pack(anchor=tk.W)
 
         out_box = ttk.Frame(pdf_tab)
@@ -161,45 +204,45 @@ class PDFConverterApp:
         self.custom_output_btn.pack(side=tk.LEFT)
 
         # Tab 2: Translation Options (Optional)
-        trans_tab = ttk.Frame(settings_notebook, padding="10")
-        settings_notebook.add(trans_tab, text="  Translator (Optional)  ")
+        self.trans_tab = ttk.Frame(settings_notebook, padding="10")
+        settings_notebook.add(self.trans_tab, text="  Translator Settings  ")
 
         self.enable_trans_var = tk.BooleanVar(value=False)
-        trans_check = ttk.Checkbutton(
-            trans_tab,
-            text="Enable Translation for Japanese Books (Optional)",
+        self.trans_check = ttk.Checkbutton(
+            self.trans_tab,
+            text="Enable Japanese Translation for Folder Conversion",
             variable=self.enable_trans_var,
             style="SubHeader.TLabel",
             command=self._toggle_translation_controls
         )
-        trans_check.pack(anchor=tk.W, pady=(0, 6))
+        self.trans_check.pack(anchor=tk.W, pady=(0, 6))
 
         # Output Mode Frame
-        ttk.Label(trans_tab, text="Translation Output Mode:", style="SubHeader.TLabel").pack(anchor=tk.W, pady=(4, 2))
+        ttk.Label(self.trans_tab, text="Translation Output Mode:", style="SubHeader.TLabel").pack(anchor=tk.W, pady=(4, 2))
         self.trans_mode_var = tk.StringVar(value="replace")
         self.r_replace = ttk.Radiobutton(
-            trans_tab,
-            text="In-Place Scanlation (Create '<Name> [English Translated].pdf')",
+            self.trans_tab,
+            text="In-Place Scanlation (Typeset into speech bubbles)",
             variable=self.trans_mode_var,
             value="replace"
         )
         self.r_replace.pack(anchor=tk.W)
         self.r_guide = ttk.Radiobutton(
-            trans_tab,
+            self.trans_tab,
             text="Companion Guide (.md & .txt translation notes)",
             variable=self.trans_mode_var,
             value="guide"
         )
         self.r_guide.pack(anchor=tk.W)
         self.r_both = ttk.Radiobutton(
-            trans_tab,
+            self.trans_tab,
             text="Both (Translated PDF + Companion Guide)",
             variable=self.trans_mode_var,
             value="both"
         )
         self.r_both.pack(anchor=tk.W)
 
-        lang_frame = ttk.Frame(trans_tab)
+        lang_frame = ttk.Frame(self.trans_tab)
         lang_frame.pack(fill=tk.X, pady=(6, 6))
         ttk.Label(lang_frame, text="Source:").grid(row=0, column=0, sticky=tk.W, pady=2)
         self.src_lang_cb = ttk.Combobox(lang_frame, values=["Japanese (ja)", "Korean (ko)", "Chinese (zh)"], width=15)
@@ -211,16 +254,16 @@ class PDFConverterApp:
         self.dest_lang_cb.current(0)
         self.dest_lang_cb.grid(row=1, column=1, padx=5, pady=2)
 
-        ttk.Label(trans_tab, text="Translation Engine:", style="SubHeader.TLabel").pack(anchor=tk.W, pady=(4, 2))
+        ttk.Label(self.trans_tab, text="Translation Engine:", style="SubHeader.TLabel").pack(anchor=tk.W, pady=(4, 2))
         self.engine_var = tk.StringVar(value="auto")
-        self.r_eng_auto = ttk.Radiobutton(trans_tab, text="Auto (OCR + Free Google Translate)", variable=self.engine_var, value="auto")
+        self.r_eng_auto = ttk.Radiobutton(self.trans_tab, text="Auto (OCR + Free Google Translate)", variable=self.engine_var, value="auto")
         self.r_eng_auto.pack(anchor=tk.W)
-        self.r_eng_ollama = ttk.Radiobutton(trans_tab, text="Ollama Local Vision AI (llama3.2-vision)", variable=self.engine_var, value="ollama")
+        self.r_eng_ollama = ttk.Radiobutton(self.trans_tab, text="Ollama Local Vision AI (llama3.2-vision)", variable=self.engine_var, value="ollama")
         self.r_eng_ollama.pack(anchor=tk.W)
 
         self.trans_status_lbl = ttk.Label(
-            trans_tab,
-            text="Tip: Translation is completely optional. Untranslated original PDF is always preserved at 100% clarity.",
+            self.trans_tab,
+            text="Tip: When translating PDF files, the PDF pages are extracted at chosen DPI, speech bubbles are in-place typeset, and saved as a high-quality translated PDF.",
             font=("Segoe UI", 8, "italic"),
             foreground="#555555",
             wraplength=280
@@ -235,10 +278,10 @@ class PDFConverterApp:
         progress_dashboard = ttk.LabelFrame(main_frame, text=" Progress & Status ", padding="10")
         progress_dashboard.pack(fill=tk.X, pady=(0, 8))
 
-        # --- Sub-bar 1: Current Book Page Progress ---
+        # --- Sub-bar 1: Current Book / PDF Page Progress ---
         cur_header_frame = ttk.Frame(progress_dashboard)
         cur_header_frame.pack(fill=tk.X, pady=(0, 2))
-        ttk.Label(cur_header_frame, text="Current Book:", style="ProgressTitle.TLabel").pack(side=tk.LEFT)
+        ttk.Label(cur_header_frame, text="Current Item:", style="ProgressTitle.TLabel").pack(side=tk.LEFT)
         self.current_book_lbl = ttk.Label(cur_header_frame, text="Idle", style="ProgressText.TLabel")
         self.current_book_lbl.pack(side=tk.LEFT, padx=(5, 0))
         self.current_percent_lbl = ttk.Label(cur_header_frame, text="0%", style="ProgressPercent.TLabel")
@@ -251,7 +294,7 @@ class PDFConverterApp:
         ovr_header_frame = ttk.Frame(progress_dashboard)
         ovr_header_frame.pack(fill=tk.X, pady=(0, 2))
         ttk.Label(ovr_header_frame, text="Overall Batch:", style="ProgressTitle.TLabel").pack(side=tk.LEFT)
-        self.overall_book_lbl = ttk.Label(ovr_header_frame, text="0 / 0 books completed", style="ProgressText.TLabel")
+        self.overall_book_lbl = ttk.Label(ovr_header_frame, text="0 / 0 completed", style="ProgressText.TLabel")
         self.overall_book_lbl.pack(side=tk.LEFT, padx=(5, 0))
         self.overall_percent_lbl = ttk.Label(ovr_header_frame, text="0%", style="ProgressPercent.TLabel")
         self.overall_percent_lbl.pack(side=tk.RIGHT)
@@ -267,9 +310,9 @@ class PDFConverterApp:
 
         self.start_btn = ttk.Button(
             action_bar,
-            text="🚀 Convert Selected Books to PDF",
+            text="🚀 Convert Selected Folders to PDF",
             style="Primary.TButton",
-            command=self.start_conversion
+            command=self.start_processing
         )
         self.start_btn.pack(side=tk.LEFT, padx=(0, 8))
 
@@ -289,7 +332,23 @@ class PDFConverterApp:
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         log_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.log("Ready. Select books and click 'Convert Selected Books to PDF'.")
+        self.log("Ready. Select books or PDFs and click the action button to begin.")
+
+    def _on_notebook_tab_changed(self, event):
+        tab_idx = self.left_notebook.index(self.left_notebook.select())
+        if tab_idx == 0:
+            self.start_btn.configure(text="🚀 Convert Selected Folders to PDF")
+            self._toggle_translation_controls()
+        else:
+            self.start_btn.configure(text="🌐 Translate Selected PDF Files")
+            # When on PDF tab, enable translation controls
+            self.r_replace.configure(state=tk.NORMAL)
+            self.r_guide.configure(state=tk.NORMAL)
+            self.r_both.configure(state=tk.NORMAL)
+            self.src_lang_cb.configure(state=tk.NORMAL)
+            self.dest_lang_cb.configure(state=tk.NORMAL)
+            self.r_eng_auto.configure(state=tk.NORMAL)
+            self.r_eng_ollama.configure(state=tk.NORMAL)
 
     def _toggle_output_entry(self):
         is_custom = not self.output_same_var.get()
@@ -298,8 +357,19 @@ class PDFConverterApp:
         self.custom_output_btn.configure(state=state)
 
     def _toggle_translation_controls(self):
-        enabled = self.enable_trans_var.get()
-        state = tk.NORMAL if enabled else tk.DISABLED
+        tab_idx = 0
+        try:
+            tab_idx = self.left_notebook.index(self.left_notebook.select())
+        except Exception:
+            pass
+
+        # If on PDF tab, translation controls are always enabled
+        if tab_idx == 1:
+            state = tk.NORMAL
+        else:
+            enabled = self.enable_trans_var.get()
+            state = tk.NORMAL if enabled else tk.DISABLED
+
         self.r_replace.configure(state=state)
         self.r_guide.configure(state=state)
         self.r_both.configure(state=state)
@@ -325,7 +395,7 @@ class PDFConverterApp:
         self.root.after(100, self._start_log_consumer)
 
     def update_current_progress(self, current: int, total: int, status_text: str = ""):
-        """Thread-safe update for the Current Book progress bar."""
+        """Thread-safe update for the Current Book/PDF progress bar."""
         def _update():
             self.current_progress_bar.configure(maximum=max(1, total), value=current)
             percent = (current / total * 100.0) if total > 0 else 0.0
@@ -358,8 +428,29 @@ class PDFConverterApp:
             self.custom_output_entry.delete(0, tk.END)
             self.custom_output_entry.insert(0, selected)
 
+    def add_custom_pdfs(self):
+        """Allows user to select PDF files from anywhere on disk to add to the PDF list."""
+        files = filedialog.askopenfilenames(
+            initialdir=self.current_dir,
+            title="Select PDF Files to Translate",
+            filetypes=[("PDF Documents", "*.pdf"), ("All Files", "*.*")]
+        )
+        if files:
+            added_count = 0
+            for f_str in files:
+                p = Path(f_str)
+                if str(p) not in [self.pdf_tree.item(iid)['values'][0] for iid in self.pdf_tree.get_children()]:
+                    page_cnt = translator.get_pdf_page_count(p)
+                    self.pdf_tree.insert("", tk.END, iid=str(p), values=(p.name, page_cnt, "Ready"))
+                    self.pdf_tree.selection_add(str(p))
+                    added_count += 1
+            if added_count:
+                total_pdfs = len(self.pdf_tree.get_children())
+                self.pdf_count_lbl.config(text=f"{total_pdfs} PDF(s) listed")
+                self.log(f"Added {added_count} external PDF file(s) to list.")
+
     def scan_books(self):
-        """Scans the workspace directory recursively for any folders containing images."""
+        """Scans the workspace directory recursively for folders and PDF files."""
         p_str = self.dir_entry.get().strip()
         root_path = Path(p_str)
         if not root_path.exists() or not root_path.is_dir():
@@ -367,9 +458,11 @@ class PDFConverterApp:
             return
 
         self.current_dir = root_path
-        self.tree.delete(*self.tree.get_children())
-        self.log(f"Scanning '{root_path.name}' for image book folders...")
+        self.folder_tree.delete(*self.folder_tree.get_children())
+        self.pdf_tree.delete(*self.pdf_tree.get_children())
+        self.log(f"Scanning '{root_path.name}' for image book folders & PDF files...")
 
+        # 1. Scan image folders
         folders = folder_to_pdf.find_image_folders(root_path, recursive=True)
         self.discovered_folders = folders
 
@@ -377,25 +470,45 @@ class PDFConverterApp:
             images = folder_to_pdf.get_image_files_in_folder(f)
             pdf_path = f.parent / f"{f.name}.pdf"
             status = "Already Converted" if pdf_path.exists() else "Ready"
-            self.tree.insert("", tk.END, iid=str(f), values=(f.name, len(images), status))
+            self.folder_tree.insert("", tk.END, iid=str(f), values=(f.name, len(images), status))
 
-        self.count_label.config(text=f"{len(folders)} book folder(s) found")
-        self.log(f"Scan complete. Found {len(folders)} book folder(s).")
-        self.select_all()
+        self.folder_count_lbl.config(text=f"{len(folders)} folder(s) found")
 
-    def select_all(self):
-        self.tree.selection_set(self.tree.get_children())
+        # 2. Scan existing PDF files
+        pdfs = folder_to_pdf.find_pdf_files(root_path, recursive=True)
+        self.discovered_pdfs = pdfs
 
-    def deselect_all(self):
-        self.tree.selection_remove(self.tree.get_children())
+        for p in pdfs:
+            # Check if translation already exists
+            t_pdf = p.parent / f"{p.stem} [English Translated].pdf"
+            status = "Already Translated" if t_pdf.exists() else "Ready"
+            pages = translator.get_pdf_page_count(p)
+            self.pdf_tree.insert("", tk.END, iid=str(p), values=(p.name, pages, status))
 
-    def start_conversion(self):
+        self.pdf_count_lbl.config(text=f"{len(pdfs)} PDF(s) found")
+        self.log(f"Scan complete: Found {len(folders)} image folder(s) and {len(pdfs)} PDF file(s).")
+
+        # Select all in active tab
+        tab_idx = self.left_notebook.index(self.left_notebook.select())
+        if tab_idx == 0:
+            self.folder_tree.selection_set(self.folder_tree.get_children())
+        else:
+            self.pdf_tree.selection_set(self.pdf_tree.get_children())
+
+    def start_processing(self):
         if self.is_processing:
             return
 
-        selected_ids = self.tree.selection()
+        tab_idx = self.left_notebook.index(self.left_notebook.select())
+        if tab_idx == 0:
+            self._start_folder_conversion()
+        else:
+            self._start_pdf_translation()
+
+    def _start_folder_conversion(self):
+        selected_ids = self.folder_tree.selection()
         if not selected_ids:
-            messagebox.showwarning("No Books Selected", "Please select one or more books from the list to convert.")
+            messagebox.showwarning("No Folders Selected", "Please select one or more book folders from the list to convert.")
             return
 
         folders_to_convert = [Path(iid) for iid in selected_ids]
@@ -411,38 +524,33 @@ class PDFConverterApp:
         engine = self.engine_var.get()
 
         self.is_processing = True
-        self.start_btn.configure(state=tk.DISABLED, text="⏳ Processing...")
-        
-        # Reset progress bars
-        self.update_current_progress(0, 1, "Initializing...")
-        self.update_overall_progress(0, len(folders_to_convert), f"0 / {len(folders_to_convert)} books completed")
+        self.start_btn.configure(state=tk.DISABLED, text="⏳ Processing Folders...")
 
-        # Launch worker thread
+        self.update_current_progress(0, 1, "Initializing...")
+        self.update_overall_progress(0, len(folders_to_convert), f"0 / {len(folders_to_convert)} folders completed")
+
         thread = threading.Thread(
-            target=self._worker_process,
+            target=self._folder_worker_process,
             args=(folders_to_convert, custom_out, overwrite, quality, enable_trans, trans_mode, src_code, dest_code, engine),
             daemon=True
         )
         thread.start()
 
-    def _worker_process(self, folders, custom_out, overwrite, quality, enable_trans, trans_mode, src_code, dest_code, engine):
+    def _folder_worker_process(self, folders, custom_out, overwrite, quality, enable_trans, trans_mode, src_code, dest_code, engine):
         total = len(folders)
         success_count = 0
-        self.log(f"Starting conversion for {total} selected book(s)...")
+        self.log(f"Starting conversion for {total} selected book folder(s)...")
 
         for idx, folder in enumerate(folders, 1):
             folder_name = folder.name
             self.log(f"[{idx}/{total}] Processing '{folder_name}'...")
-            
-            # Update overall progress status
-            self.update_overall_progress(idx - 1, total, f"Book {idx} of {total}: '{folder_name}'")
+            self.update_overall_progress(idx - 1, total, f"Folder {idx} of {total}: '{folder_name}'")
 
-            # Callback for per-page conversion progress
             def on_page_progress(cur, tot, msg):
                 disp_msg = f"'{folder_name}' - {msg}"
                 self.update_current_progress(cur, tot, disp_msg)
 
-            # 1. Convert to PDF (original high-quality PDF)
+            # 1. Convert to PDF
             pdf_path = folder_to_pdf.convert_folder_to_pdf(
                 folder,
                 output_dir=custom_out,
@@ -453,12 +561,12 @@ class PDFConverterApp:
 
             if pdf_path:
                 success_count += 1
-                self.root.after(0, lambda f=folder: self.tree.set(str(f), "status", "Converted ✓"))
+                self.root.after(0, lambda f=folder: self.folder_tree.set(str(f), "status", "Converted ✓"))
 
                 # 2. Optional Translation step
                 if enable_trans:
                     self.log(f"    🌐 Running translation for '{folder_name}' ({src_code} -> {dest_code}, mode: {trans_mode})...")
-                    
+
                     if trans_mode in ("replace", "both"):
                         self.log(f"       Inpainting & typesetting translated pages for '{folder_name}'...")
                         t_pdf, page_data = folder_to_pdf.create_translated_pdf(
@@ -490,7 +598,6 @@ class PDFConverterApp:
                                 total_pages,
                                 f"Translating Page {p_idx}/{total_pages}: {img_path.name}"
                             )
-                            self.log(f"       Translating page {p_idx}/{total_pages}: {img_path.name}")
                             trans_data = translator.translate_page(
                                 img_path,
                                 src_lang=src_code,
@@ -504,20 +611,105 @@ class PDFConverterApp:
                         self.log(f"    ✓ Translation companion guide saved: {md_path.name}")
 
             else:
-                self.root.after(0, lambda f=folder: self.tree.set(str(f), "status", "Skipped / Error"))
+                self.root.after(0, lambda f=folder: self.folder_tree.set(str(f), "status", "Skipped / Error"))
 
-            # Update overall progress bar after book finishes
-            self.update_overall_progress(idx, total, f"{idx} / {total} books completed")
+            self.update_overall_progress(idx, total, f"{idx} / {total} folders completed")
 
         self.update_current_progress(100, 100, "All operations finished.")
         self.update_overall_progress(total, total, f"Finished! {success_count}/{total} books created.")
-        self.log(f"Done! Successfully processed {success_count}/{total} book(s).")
+        self.log(f"Done! Successfully processed {success_count}/{total} book folder(s).")
+        self.root.after(0, self._on_processing_complete)
+
+    def _start_pdf_translation(self):
+        selected_ids = self.pdf_tree.selection()
+        if not selected_ids:
+            messagebox.showwarning("No PDFs Selected", "Please select one or more PDF files from the list to translate.")
+            return
+
+        pdfs_to_translate = [Path(iid) for iid in selected_ids]
+
+        # Read settings
+        quality = self.quality_var.get()
+        dpi = self.dpi_var.get()
+        overwrite = self.overwrite_var.get()
+        custom_out = None if self.output_same_var.get() else Path(self.custom_output_entry.get().strip())
+        trans_mode = self.trans_mode_var.get()
+        src_code = self.src_lang_cb.get().split("(")[-1].replace(")", "").strip()
+        dest_code = self.dest_lang_cb.get().split("(")[-1].replace(")", "").strip()
+        engine = self.engine_var.get()
+
+        self.is_processing = True
+        self.start_btn.configure(state=tk.DISABLED, text="⏳ Translating PDFs...")
+
+        self.update_current_progress(0, 1, "Initializing PDF translation...")
+        self.update_overall_progress(0, len(pdfs_to_translate), f"0 / {len(pdfs_to_translate)} PDFs completed")
+
+        thread = threading.Thread(
+            target=self._pdf_worker_process,
+            args=(pdfs_to_translate, custom_out, overwrite, quality, dpi, trans_mode, src_code, dest_code, engine),
+            daemon=True
+        )
+        thread.start()
+
+    def _pdf_worker_process(self, pdfs, custom_out, overwrite, quality, dpi, trans_mode, src_code, dest_code, engine):
+        total = len(pdfs)
+        success_count = 0
+        self.log(f"Starting direct translation for {total} selected PDF file(s)...")
+
+        for idx, pdf_p in enumerate(pdfs, 1):
+            pdf_name = pdf_p.name
+            self.log(f"[{idx}/{total}] Translating PDF: '{pdf_name}' (mode: {trans_mode}, {dpi} DPI)...")
+            self.update_overall_progress(idx - 1, total, f"PDF {idx} of {total}: '{pdf_name}'")
+
+            def on_page_progress(cur, tot, msg):
+                disp_msg = f"'{pdf_name}' - {msg}"
+                self.update_current_progress(cur, tot, disp_msg)
+
+            try:
+                out_pdf, guide_data = translator.translate_pdf_file(
+                    pdf_p,
+                    output_dir=custom_out,
+                    overwrite=overwrite,
+                    quality=quality,
+                    mode=trans_mode,
+                    src_lang=src_code,
+                    dest_lang=dest_code,
+                    engine=engine,
+                    dpi=dpi,
+                    page_callback=on_page_progress
+                )
+
+                if out_pdf or (trans_mode == "guide" and guide_data):
+                    success_count += 1
+                    self.root.after(0, lambda p=pdf_p: self.pdf_tree.set(str(p), "status", "Translated ✓"))
+                    if out_pdf:
+                        size_str = folder_to_pdf.format_size(out_pdf.stat().st_size)
+                        self.log(f"    ✓ Translated PDF saved: '{out_pdf.name}' ({size_str})")
+                    if trans_mode in ("guide", "both"):
+                        self.log(f"    ✓ Translation companion guide saved for '{pdf_name}'")
+                else:
+                    self.root.after(0, lambda p=pdf_p: self.pdf_tree.set(str(p), "status", "Skipped"))
+                    self.log(f"    [-] Skipped '{pdf_name}' (already exists or no pages)")
+
+            except Exception as e:
+                self.log(f"    [!] Error translating '{pdf_name}': {e}")
+                self.root.after(0, lambda p=pdf_p: self.pdf_tree.set(str(p), "status", "Error"))
+
+            self.update_overall_progress(idx, total, f"{idx} / {total} PDFs completed")
+
+        self.update_current_progress(100, 100, "All PDF operations finished.")
+        self.update_overall_progress(total, total, f"Finished! {success_count}/{total} PDF(s) translated.")
+        self.log(f"Done! Successfully processed {success_count}/{total} PDF file(s).")
         self.root.after(0, self._on_processing_complete)
 
     def _on_processing_complete(self):
         self.is_processing = False
-        self.start_btn.configure(state=tk.NORMAL, text="🚀 Convert Selected Books to PDF")
-        messagebox.showinfo("Complete", "Conversion process has finished successfully!")
+        tab_idx = self.left_notebook.index(self.left_notebook.select())
+        if tab_idx == 0:
+            self.start_btn.configure(state=tk.NORMAL, text="🚀 Convert Selected Folders to PDF")
+        else:
+            self.start_btn.configure(state=tk.NORMAL, text="🌐 Translate Selected PDF Files")
+        messagebox.showinfo("Complete", "Processing has finished successfully!")
 
     def open_output_folder(self):
         target = self.current_dir

@@ -111,6 +111,40 @@ def find_image_folders(root: Path, recursive: bool = True) -> list[Path]:
     return image_folders
 
 
+def find_pdf_files(root: Path, recursive: bool = True) -> list[Path]:
+    """
+    Finds PDF files in directory, ignoring already translated companion PDFs.
+    """
+    pdfs = []
+    if not root.is_dir():
+        if root.is_file() and root.suffix.lower() == '.pdf':
+            return [root]
+        return []
+
+    try:
+        if recursive:
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = [d for d in dirnames if not d.startswith('.') and d != '__MACOSX']
+                for fn in filenames:
+                    if fn.lower().endswith('.pdf'):
+                        fl = fn.lower()
+                        if "[english translated]" in fl or "[translated]" in fl:
+                            continue
+                        pdfs.append(Path(dirpath) / fn)
+        else:
+            for entry in root.iterdir():
+                if entry.is_file() and entry.suffix.lower() == '.pdf':
+                    fl = entry.name.lower()
+                    if "[english translated]" in fl or "[translated]" in fl:
+                        continue
+                    pdfs.append(entry)
+    except Exception:
+        pass
+
+    pdfs.sort(key=lambda p: natural_sort_key(p.name))
+    return pdfs
+
+
 def format_size(num_bytes: int) -> str:
     """Format bytes into human-readable string."""
     for unit in ['B', 'KB', 'MB', 'GB']:
@@ -369,10 +403,11 @@ def run_interactive():
     print("1. Convert all image folders in current directory (Direct subfolders)")
     print("2. Convert all image folders recursively (Includes deep subfolders)")
     print("3. Enter a custom folder path to convert")
-    print("4. Exit")
+    print("4. Translate existing PDF file(s)")
+    print("5. Exit")
     print("-" * 65)
 
-    choice = input("Enter your choice (1-4) [default: 1]: ").strip()
+    choice = input("Enter your choice (1-5) [default: 1]: ").strip()
     if choice == '' or choice == '1':
         folders = find_image_folders(Path.cwd(), recursive=False)
         process_batch(folders)
@@ -391,6 +426,17 @@ def run_interactive():
             return
         process_batch(folders)
     elif choice == '4':
+        pdf_path_str = input("Enter PDF file path to translate: ").strip().strip('"').strip("'")
+        p = Path(pdf_path_str)
+        if not p.exists() or not p.is_file():
+            print(f"[!] Invalid PDF file path: {pdf_path_str}")
+            return
+        import translator
+        print(f"\nTranslating '{p.name}'...")
+        out_p, _ = translator.translate_pdf_file(p, mode="replace", overwrite=False)
+        if out_p:
+            print(f"[✓] Translated PDF saved to: {out_p}")
+    elif choice == '5':
         print("Goodbye!")
         return
     else:
@@ -461,31 +507,109 @@ def main():
         default=100,
         help="Image quality (1-100, default: 100 for maximum clarity)."
     )
+    parser.add_argument(
+        "--translate",
+        action="store_true",
+        help="Enable optional Japanese translation."
+    )
+    parser.add_argument(
+        "--translate-mode",
+        choices=["replace", "guide", "both"],
+        default="replace",
+        help="Translation mode: 'replace' (scanlation), 'guide' (companion guide), or 'both'."
+    )
+    parser.add_argument(
+        "--src-lang",
+        default="ja",
+        help="Source language code (default: ja)."
+    )
+    parser.add_argument(
+        "--dest-lang",
+        default="en",
+        help="Target language code (default: en)."
+    )
+    parser.add_argument(
+        "--engine",
+        default="auto",
+        help="Translation engine: 'auto' or 'ollama'."
+    )
+    parser.add_argument(
+        "--dpi",
+        type=int,
+        default=200,
+        help="Rendering resolution (DPI) for PDF translation (default: 200)."
+    )
 
     args = parser.parse_args()
     output_dir = Path(args.output) if args.output else None
 
-    # Case 1: Drag & drop or CLI folder arguments provided
+    # Case 1: Drag & drop or CLI arguments provided (Folders or PDF Files)
     if args.inputs:
-        targets = []
+        folder_targets = []
+        pdf_targets = []
+
         for item_str in args.inputs:
             p = Path(item_str.strip('"').strip("'"))
             if not p.exists():
                 print(f"[!] Path does not exist: {p}")
                 continue
-            if p.is_dir():
+            if p.is_file() and p.suffix.lower() == '.pdf':
+                pdf_targets.append(p)
+            elif p.is_dir():
                 if get_image_files_in_folder(p):
-                    targets.append(p)
+                    folder_targets.append(p)
                 else:
                     sub_folders = find_image_folders(p, recursive=True)
-                    targets.extend(sub_folders)
+                    folder_targets.extend(sub_folders)
+                    # Also look for PDFs in subfolders if requested
+                    sub_pdfs = find_pdf_files(p, recursive=True)
+                    if sub_pdfs and args.translate:
+                        pdf_targets.extend(sub_pdfs)
 
-        if not targets:
-            print("[-] No image folders found in provided arguments.")
-        else:
-            for idx, f in enumerate(targets, 1):
-                print(f"\n--- Book [{idx}/{len(targets)}]: {f.name} ---")
+        # Process any PDF targets
+        if pdf_targets:
+            import translator
+            print(f"\nProcessing {len(pdf_targets)} PDF file(s) for translation...")
+            for idx, pdf_p in enumerate(pdf_targets, 1):
+                print(f"\n--- PDF [{idx}/{len(pdf_targets)}]: {pdf_p.name} ---")
+                def on_pdf_prog(cur, tot, msg):
+                    print_cli_progress_bar(cur, tot, prefix="Page: ", suffix=msg[:30])
+                try:
+                    out_pdf, guide_data = translator.translate_pdf_file(
+                        pdf_p,
+                        output_dir=output_dir,
+                        overwrite=args.overwrite,
+                        quality=args.quality,
+                        mode=args.translate_mode,
+                        src_lang=args.src_lang,
+                        dest_lang=args.dest_lang,
+                        engine=args.engine,
+                        dpi=args.dpi,
+                        page_callback=on_pdf_prog
+                    )
+                    if out_pdf:
+                        print(f"  [✓] Translated PDF saved: {out_pdf.name}")
+                except Exception as e:
+                    print(f"  [!] Error translating '{pdf_p.name}': {e}")
+
+        # Process any Folder targets
+        if folder_targets:
+            for idx, f in enumerate(folder_targets, 1):
+                print(f"\n--- Book [{idx}/{len(folder_targets)}]: {f.name} ---")
                 convert_folder_to_pdf(f, output_dir=output_dir, overwrite=args.overwrite, quality=args.quality)
+                if args.translate:
+                    create_translated_pdf(
+                        f,
+                        output_dir=output_dir,
+                        overwrite=args.overwrite,
+                        quality=args.quality,
+                        src_lang=args.src_lang,
+                        dest_lang=args.dest_lang,
+                        engine=args.engine
+                    )
+
+        if not folder_targets and not pdf_targets:
+            print("[-] No image folders or PDF files found in provided arguments.")
 
     # Case 2: --all or --recursive flag specified without inputs
     elif args.all or args.recursive:
